@@ -5,7 +5,7 @@
   "main": "index.js",
   "scripts": {
     "lint": "eslint src/",
-    "test": "jest",
+    "test": "jest --coverage",
     "start": "cd src && node index.js"
   },
   "license": "MIT",
@@ -16,8 +16,10 @@
     "mysql2": "^3.9.7"
   },
   "devDependencies": {
-    "@eslint/js": "^9.16.0",
-    "eslint": "^9.16.0",
-    "globals": "^15.13.0"
+    "@eslint/js": "^8.56.0",
+    "eslint": "^8.56.0",
+    "globals": "^13.24.0",
+    "jest": "^29.7.0",
+    "supertest": "^6.3.3"
   }
 }
