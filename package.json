@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "jest --coverage",
+    "test": "jest --coverage --detectOpenHandles",
     "lint": "eslint src/**/*.js --fix",
     "start": "cd src && node index.js"
   },
@@ -16,19 +16,26 @@
     "mysql2": "^3.9.7"
   },
   "devDependencies": {
-    "jest": "^29.7.0",
     "eslint": "^8.57.0",
     "eslint-config-airbnb-base": "^15.0.0",
     "eslint-plugin-import": "^2.29.1",
+    "jest": "^29.7.0",
     "supertest": "^6.3.4"
   },
   "jest": {
     "collectCoverage": true,
-    "coverageReporters": ["json", "json-summary", "lcov", "text"],
+    "coverageReporters": [
+      "json",
+      "json-summary",
+      "lcov",
+      "text"
+    ],
     "coverageThreshold": {
       "global": {
         "lines": 80
       }
-    }
+    },
+    "testEnvironment": "node",
+    "setupFiles": ["<rootDir>/jest.setup.js"]
   }
 }

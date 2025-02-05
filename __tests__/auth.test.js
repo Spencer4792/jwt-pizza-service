@@ -2,76 +2,142 @@ const request = require('supertest');
 const express = require('express');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcrypt');
-const config = require('../src/config');
-const { authRouter } = require('../src/routes/authRouter');
+const { authRouter, setAuthUser } = require('../src/routes/authRouter');
 const { DB } = require('../src/database/database');
 
 // Mock the database calls
 jest.mock('../src/database/database', () => ({
   DB: {
-    getUserByUsername: jest.fn(),
-    createUser: jest.fn(),
-    getUserById: jest.fn()
+    addUser: jest.fn(),
+    getUser: jest.fn(),
+    updateUser: jest.fn(),
+    loginUser: jest.fn(),
+    logoutUser: jest.fn(),
+    isLoggedIn: jest.fn(),
+    Role: {
+      Diner: 'diner',
+      Admin: 'admin'
+    }
   }
 }));
 
 const app = express();
 app.use(express.json());
-app.use('/auth', authRouter);
+app.use(setAuthUser);
+app.use('/', authRouter);
 
 describe('Auth Endpoints', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    DB.isLoggedIn.mockResolvedValue(true);
   });
 
-  describe('POST /auth/register', () => {
+  describe('POST / (Register)', () => {
     test('should create new user successfully', async () => {
       const newUser = {
-        username: 'newuser',
-        password: 'password123',
+        name: 'Test User',
+        email: 'test@example.com',
+        password: 'password123'
       };
 
-      DB.getUserByUsername.mockResolvedValue(null);
-      DB.createUser.mockResolvedValue({ id: 1, ...newUser, role: 'user' });
+      const mockUser = {
+        id: 1,
+        name: newUser.name,
+        email: newUser.email,
+        roles: [{ role: 'diner' }]
+      };
+
+      DB.addUser.mockResolvedValue(mockUser);
+      DB.loginUser.mockResolvedValue();
 
       const res = await request(app)
-        .post('/auth/register')
+        .post('/')
         .send(newUser);
-      
-      expect(res.statusCode).toBe(201);
+
+      expect(DB.addUser).toHaveBeenCalled();
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toHaveProperty('user');
       expect(res.body).toHaveProperty('token');
     });
 
-    test('should return 400 for missing fields', async () => {
+    test('should return 400 for missing required fields', async () => {
       const res = await request(app)
-        .post('/auth/register')
-        .send({ username: 'testuser' });
-      
+        .post('/')
+        .send({});
       expect(res.statusCode).toBe(400);
     });
   });
 
-  describe('POST /auth/login', () => {
-    test('should login successfully with correct credentials', async () => {
-      const password = 'password123';
-      const hashedPassword = await bcrypt.hash(password, 10);
-      
-      DB.getUserByUsername.mockResolvedValue({
+  describe('PUT / (Login)', () => {
+    test('should login successfully', async () => {
+      const mockUser = {
         id: 1,
-        username: 'testuser',
-        password: hashedPassword,
-        role: 'user'
-      });
+        name: 'Test User',
+        email: 'test@example.com',
+        roles: [{ role: 'diner' }]
+      };
+
+      DB.getUser.mockResolvedValue(mockUser);
+      DB.loginUser.mockResolvedValue();
 
       const res = await request(app)
-        .post('/auth/login')
+        .put('/')
         .send({
-          username: 'testuser',
-          password: password
+          email: 'test@example.com',
+          password: 'password123'
         });
 
       expect(res.statusCode).toBe(200);
+      expect(res.body.user).toEqual(mockUser);
       expect(res.body).toHaveProperty('token');
+    });
+  });
+
+  describe('PUT /:userId (Update)', () => {
+    test('should update user successfully', async () => {
+      const token = jwt.sign(
+        { id: 1, roles: [{ role: 'admin' }], isRole: () => true },
+        process.env.JWT_SECRET || 'test-secret'
+      );
+
+      const mockUser = {
+        id: 1,
+        name: 'Updated User',
+        email: 'updated@example.com'
+      };
+
+      DB.updateUser.mockResolvedValue(mockUser);
+      DB.isLoggedIn.mockResolvedValue(true);
+
+      const res = await request(app)
+        .put('/1')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          email: 'updated@example.com',
+          password: 'newpassword'
+        });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual(mockUser);
+    });
+  });
+
+  describe('DELETE / (Logout)', () => {
+    test('should logout successfully', async () => {
+      const token = jwt.sign(
+        { id: 1, roles: [{ role: 'diner' }], isRole: () => true },
+        process.env.JWT_SECRET || 'test-secret'
+      );
+
+      DB.logoutUser.mockResolvedValue();
+      DB.isLoggedIn.mockResolvedValue(true);
+
+      const res = await request(app)
+        .delete('/')
+        .set('Authorization', `Bearer ${token}`);
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({ message: 'logout successful' });
     });
   });
 });
