@@ -4,6 +4,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
+    "test": "jest --coverage",
+    "lint": "eslint src/**/*.js",
     "start": "cd src && node index.js"
   },
   "license": "MIT",
@@ -12,5 +14,21 @@
     "express": "^4.19.2",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.9.7"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "eslint": "^8.57.0",
+    "eslint-config-airbnb-base": "^15.0.0",
+    "eslint-plugin-import": "^2.29.1",
+    "supertest": "^6.3.4"
+  },
+  "jest": {
+    "collectCoverage": true,
+    "coverageReporters": ["json", "json-summary", "lcov", "text"],
+    "coverageThreshold": {
+      "global": {
+        "lines": 80
+      }
+    }
   }
 }
