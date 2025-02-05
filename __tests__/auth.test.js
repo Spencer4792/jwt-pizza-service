@@ -5,6 +5,12 @@ const bcrypt = require('bcrypt');
 const { authRouter, setAuthUser } = require('../src/routes/authRouter');
 const { DB } = require('../src/database/database');
 
+// Mock bcrypt
+jest.mock('bcrypt', () => ({
+  hash: jest.fn().mockResolvedValue('hashedPassword'),
+  compare: jest.fn().mockResolvedValue(true)
+}));
+
 // Mock the database calls
 jest.mock('../src/database/database', () => ({
   DB: {
@@ -54,7 +60,11 @@ describe('Auth Endpoints', () => {
         .post('/')
         .send(newUser);
 
-      expect(DB.addUser).toHaveBeenCalled();
+      expect(DB.addUser).toHaveBeenCalledWith(expect.objectContaining({
+        name: newUser.name,
+        email: newUser.email,
+        password: 'hashedPassword'
+      }));
       expect(res.statusCode).toBe(200);
       expect(res.body).toHaveProperty('user');
       expect(res.body).toHaveProperty('token');
@@ -70,10 +80,15 @@ describe('Auth Endpoints', () => {
 
   describe('PUT / (Login)', () => {
     test('should login successfully', async () => {
+      const loginData = {
+        email: 'test@example.com',
+        password: 'password123'
+      };
+
       const mockUser = {
         id: 1,
         name: 'Test User',
-        email: 'test@example.com',
+        email: loginData.email,
         roles: [{ role: 'diner' }]
       };
 
@@ -82,21 +97,35 @@ describe('Auth Endpoints', () => {
 
       const res = await request(app)
         .put('/')
-        .send({
-          email: 'test@example.com',
-          password: 'password123'
-        });
+        .send(loginData);
 
       expect(res.statusCode).toBe(200);
       expect(res.body.user).toEqual(mockUser);
       expect(res.body).toHaveProperty('token');
+    });
+
+    test('should return 401 for invalid credentials', async () => {
+      bcrypt.compare.mockResolvedValueOnce(false);
+      
+      const res = await request(app)
+        .put('/')
+        .send({
+          email: 'test@example.com',
+          password: 'wrongpassword'
+        });
+
+      expect(res.statusCode).toBe(401);
     });
   });
 
   describe('PUT /:userId (Update)', () => {
     test('should update user successfully', async () => {
       const token = jwt.sign(
-        { id: 1, roles: [{ role: 'admin' }], isRole: () => true },
+        { 
+          id: 1, 
+          roles: [{ role: 'admin' }], 
+          isRole: (role) => role === 'admin' 
+        },
         process.env.JWT_SECRET || 'test-secret'
       );
 
@@ -120,12 +149,36 @@ describe('Auth Endpoints', () => {
       expect(res.statusCode).toBe(200);
       expect(res.body).toEqual(mockUser);
     });
+
+    test('should return 403 for unauthorized update', async () => {
+      const token = jwt.sign(
+        { 
+          id: 2, 
+          roles: [{ role: 'diner' }], 
+          isRole: (role) => role === 'diner' 
+        },
+        process.env.JWT_SECRET || 'test-secret'
+      );
+
+      const res = await request(app)
+        .put('/1')
+        .set('Authorization', `Bearer ${token}`)
+        .send({
+          email: 'updated@example.com'
+        });
+
+      expect(res.statusCode).toBe(403);
+    });
   });
 
   describe('DELETE / (Logout)', () => {
     test('should logout successfully', async () => {
       const token = jwt.sign(
-        { id: 1, roles: [{ role: 'diner' }], isRole: () => true },
+        { 
+          id: 1, 
+          roles: [{ role: 'diner' }], 
+          isRole: (role) => role === 'diner' 
+        },
         process.env.JWT_SECRET || 'test-secret'
       );
 
@@ -138,6 +191,13 @@ describe('Auth Endpoints', () => {
 
       expect(res.statusCode).toBe(200);
       expect(res.body).toEqual({ message: 'logout successful' });
+    });
+
+    test('should return 401 for unauthorized logout', async () => {
+      const res = await request(app)
+        .delete('/');
+
+      expect(res.statusCode).toBe(401);
     });
   });
 });
