@@ -1,5 +1,19 @@
-process.env.JWT_SECRET = 'test-jwt-secret';
-process.env.FACTORY_API_KEY = 'test-factory-api-key';
+process.env.NODE_ENV = 'test';
 
-// Mock the isRole function that's used in tokens
-global.isRole = (role) => true;
+jest.mock('./src/config', () => ({
+  jwtSecret: 'test-secret',
+  db: {
+    connection: {
+      host: 'localhost',
+      user: 'test',
+      password: 'test',
+      database: 'test',
+      connectTimeout: 60000,
+    },
+    listPerPage: 10,
+  },
+  factory: {
+    url: 'https://test-factory.com',
+    apiKey: 'test-key',
+  },
+}));

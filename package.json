@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "test": "jest --coverage --detectOpenHandles",
+    "test:watch": "jest --watch",
     "lint": "eslint src/**/*.js --fix",
     "start": "cd src && node index.js"
   },
@@ -37,6 +38,10 @@
       }
     },
     "testEnvironment": "node",
-    "setupFiles": ["<rootDir>/jest.setup.js"]
+    "setupFiles": ["<rootDir>/jest.setup.js"],
+    "testMatch": [
+      "**/__tests__/**/*.test.js"
+    ],
+    "moduleDirectories": ["node_modules", "src"]
   }
 }
