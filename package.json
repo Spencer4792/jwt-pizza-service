@@ -26,6 +26,10 @@
   "jest": {
     "collectCoverage": true,
     "testPathIgnorePatterns": ["/node_modules/", "testConfig.js"],
+    "coveragePathIgnorePatterns": [
+      "/node_modules/",
+      "<rootDir>/src/metrics.js"
+    ],
     "coverageReporters": [
       "json",
       "json-summary",
