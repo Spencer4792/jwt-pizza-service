@@ -1,30 +1,6 @@
 const config = require('./config');
 const os = require('os');
 const https = require('https');
-const url = require('url');
-
-class MetricBuilder {
-  constructor() {
-    this.lines = [];
-    this.timestamp = Date.now() * 1000000; // nanoseconds
-  }
-
-  addMetric(name, tags, value) {
-    const tagString = Object.entries(tags)
-      .map(([key, val]) => `${key}=${val}`)
-      .join(',');
-    
-    // Check if config.metrics exists before trying to access source
-    const source = config.metrics?.source || 'test-environment';
-    
-    this.lines.push(`${name},source=${source}${tagString ? ',' + tagString : ''} value=${value} ${this.timestamp}`);
-    return this;
-  }
-
-  toString(delimiter = '\n') {
-    return this.lines.join(delimiter);
-  }
-}
 
 class Metrics {
   constructor() {
@@ -134,62 +110,105 @@ class Metrics {
     return parseFloat(memoryUsage.toFixed(2));
   }
   
-  // Build HTTP metrics
-  httpMetrics(buf) {
-    buf.addMetric('http_requests_total', {}, this.httpRequests.total)
-      .addMetric('http_requests_get', {}, this.httpRequests.get)
-      .addMetric('http_requests_post', {}, this.httpRequests.post)
-      .addMetric('http_requests_put', {}, this.httpRequests.put)
-      .addMetric('http_requests_delete', {}, this.httpRequests.delete);
-  }
-  
-  // Build system metrics
-  systemMetrics(buf) {
-    buf.addMetric('cpu_percentage', {}, this.getCpuUsagePercentage())
-      .addMetric('memory_percentage', {}, this.getMemoryUsagePercentage());
-  }
-  
-  // Build user metrics
-  userMetrics(buf) {
-    buf.addMetric('active_users', {}, this.activeUsers.size);
-  }
-  
-  // Build auth metrics
-  authMetrics(buf) {
-    buf.addMetric('auth_successful', {}, this.auth.successful)
-      .addMetric('auth_failed', {}, this.auth.failed);
-  }
-  
-  // Build purchase metrics
-  purchaseMetrics(buf) {
-    buf.addMetric('pizzas_sold', {}, this.pizzas.sold)
-      .addMetric('pizzas_failures', {}, this.pizzas.failures)
-      .addMetric('pizzas_revenue', {}, this.pizzas.revenue);
+  // Build OTLP metrics payload
+  buildOTLPMetricsPayload() {
+    const now = Date.now() * 1000000; // Convert to nanoseconds
     
-    // Calculate average latencies and reset arrays
+    // Calculate average latencies
+    let avgServiceLatency = 0;
     if (this.latency.service.length > 0) {
-      const avgServiceLatency = this.latency.service.reduce((a, b) => a + b, 0) / this.latency.service.length;
-      buf.addMetric('service_latency', {}, parseFloat(avgServiceLatency.toFixed(2)));
+      avgServiceLatency = this.latency.service.reduce((a, b) => a + b, 0) / this.latency.service.length;
       this.latency.service = []; // Reset after reporting
     }
     
+    let avgPizzaLatency = 0;
     if (this.latency.pizzaCreation.length > 0) {
-      const avgPizzaLatency = this.latency.pizzaCreation.reduce((a, b) => a + b, 0) / this.latency.pizzaCreation.length;
-      buf.addMetric('pizza_creation_latency', {}, parseFloat(avgPizzaLatency.toFixed(2)));
+      avgPizzaLatency = this.latency.pizzaCreation.reduce((a, b) => a + b, 0) / this.latency.pizzaCreation.length;
       this.latency.pizzaCreation = []; // Reset after reporting
     }
+    
+    // Define resource attributes
+    const resource = {
+      attributes: [
+        { key: "service.name", value: { stringValue: config.metrics?.source || "jwt-pizza-service" } }
+      ]
+    };
+    
+    // Define metrics
+    const metrics = [
+      // HTTP request metrics
+      this.createGaugeMetric("http_requests_total", "1", this.httpRequests.total, now),
+      this.createGaugeMetric("http_requests_get", "1", this.httpRequests.get, now),
+      this.createGaugeMetric("http_requests_post", "1", this.httpRequests.post, now),
+      this.createGaugeMetric("http_requests_put", "1", this.httpRequests.put, now),
+      this.createGaugeMetric("http_requests_delete", "1", this.httpRequests.delete, now),
+      
+      // Auth metrics
+      this.createGaugeMetric("auth_successful", "1", this.auth.successful, now),
+      this.createGaugeMetric("auth_failed", "1", this.auth.failed, now),
+      
+      // User metrics
+      this.createGaugeMetric("active_users", "1", this.activeUsers.size, now),
+      
+      // System metrics
+      this.createGaugeMetric("cpu_percentage", "%", this.getCpuUsagePercentage(), now),
+      this.createGaugeMetric("memory_percentage", "%", this.getMemoryUsagePercentage(), now),
+      
+      // Pizza metrics
+      this.createGaugeMetric("pizzas_sold", "1", this.pizzas.sold, now),
+      this.createGaugeMetric("pizzas_failures", "1", this.pizzas.failures, now),
+      this.createGaugeMetric("pizzas_revenue", "$", this.pizzas.revenue, now),
+      
+      // Latency metrics
+      this.createGaugeMetric("service_latency", "ms", avgServiceLatency, now),
+      this.createGaugeMetric("pizza_creation_latency", "ms", avgPizzaLatency, now)
+    ];
+    
+    // Construct the final payload
+    return {
+      resourceMetrics: [
+        {
+          resource: resource,
+          scopeMetrics: [
+            {
+              metrics: metrics
+            }
+          ]
+        }
+      ]
+    };
+  }
+  
+  // Helper to create a gauge metric in OTLP format
+  createGaugeMetric(name, unit, value, timeNanoseconds) {
+    return {
+      name: name,
+      unit: unit,
+      gauge: {
+        dataPoints: [
+          {
+            asDouble: value,
+            timeUnixNano: timeNanoseconds
+          }
+        ]
+      }
+    };
   }
   
   // Send metrics to Grafana
-  sendMetricToGrafana(metrics) {
+  sendMetricsToGrafana() {
     // Skip if no metrics configuration is available (e.g., in test environment)
     if (!config.metrics || !config.metrics.url || !config.metrics.apiKey) {
       console.log('Metrics not sent - configuration missing');
       return;
     }
     
-    // Parse the URL from the configuration
     try {
+      // Build OTLP metrics payload
+      const payload = this.buildOTLPMetricsPayload();
+      const data = JSON.stringify(payload);
+      
+      // Parse the URL from the configuration
       const parsedUrl = new URL(config.metrics.url);
       
       const options = {
@@ -199,8 +218,8 @@ class Metrics {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${config.metrics.apiKey}`,
-          'Content-Type': 'text/plain',
-          'Content-Length': Buffer.byteLength(metrics)
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(data)
         }
       };
       
@@ -212,9 +231,11 @@ class Metrics {
         });
         
         res.on('end', () => {
-          if (res.statusCode !== 204) {
+          if (res.statusCode !== 200 && res.statusCode !== 204) {
             console.error(`Failed to send metrics. Status code: ${res.statusCode}`);
             console.error(`Response: ${responseData}`);
+          } else {
+            console.log('Metrics sent successfully to Grafana');
           }
         });
       });
@@ -223,7 +244,7 @@ class Metrics {
         console.error(`Error sending metrics: ${error.message}`);
       });
       
-      req.write(metrics);
+      req.write(data);
       req.end();
     } catch (error) {
       console.error(`Error preparing metrics request: ${error.message}`);
@@ -234,16 +255,7 @@ class Metrics {
   startPeriodicReporting(period) {
     setInterval(() => {
       try {
-        const buf = new MetricBuilder();
-        this.httpMetrics(buf);
-        this.systemMetrics(buf);
-        this.userMetrics(buf);
-        this.purchaseMetrics(buf);
-        this.authMetrics(buf);
-        
-        const metrics = buf.toString('\n');
-        this.sendMetricToGrafana(metrics);
-        console.log('Metrics sent to Grafana');
+        this.sendMetricsToGrafana();
       } catch (error) {
         console.error('Error sending metrics:', error);
       }
