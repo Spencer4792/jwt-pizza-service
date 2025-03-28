@@ -14,4 +14,9 @@ module.exports = {
     url: 'https://pizza-factory.cs329.click',
     apiKey: process.env.FACTORY_API_KEY,
   },
+  metrics: {
+    source: process.env.METRICS_SOURCE || 'jwt-pizza-service-dev',
+    url: process.env.METRICS_URL,
+    apiKey: process.env.METRICS_API_KEY,
+  },
 };

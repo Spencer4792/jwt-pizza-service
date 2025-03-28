@@ -3,6 +3,7 @@ const config = require('../config.js');
 const { Role, DB } = require('../database/database.js');
 const { authRouter } = require('./authRouter.js');
 const { asyncHandler, StatusCodeError } = require('../endpointHelper.js');
+const metrics = require('../metrics.js');
 
 const orderRouter = express.Router();
 
@@ -40,7 +41,6 @@ orderRouter.endpoints = [
   },
 ];
 
-// getMenu
 orderRouter.get(
   '/menu',
   asyncHandler(async (req, res) => {
@@ -48,7 +48,6 @@ orderRouter.get(
   })
 );
 
-// addMenuItem
 orderRouter.put(
   '/menu',
   authRouter.authenticateToken,
@@ -63,7 +62,6 @@ orderRouter.put(
   })
 );
 
-// getOrders
 orderRouter.get(
   '/',
   authRouter.authenticateToken,
@@ -72,23 +70,41 @@ orderRouter.get(
   })
 );
 
-// createOrder
 orderRouter.post(
   '/',
   authRouter.authenticateToken,
   asyncHandler(async (req, res) => {
     const orderReq = req.body;
     const order = await DB.addDinerOrder(req.user, orderReq);
-    const r = await fetch(`${config.factory.url}/api/order`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', authorization: `Bearer ${config.factory.apiKey}` },
-      body: JSON.stringify({ diner: { id: req.user.id, name: req.user.name, email: req.user.email }, order }),
-    });
-    const j = await r.json();
-    if (r.ok) {
-      res.send({ order, reportSlowPizzaToFactoryUrl: j.reportUrl, jwt: j.jwt });
-    } else {
-      res.status(500).send({ message: 'Failed to fulfill order at factory', reportPizzaCreationErrorToPizzaFactoryUrl: j.reportUrl });
+    
+    const totalPrice = order.items.reduce((total, item) => total + item.price, 0);
+    
+    const startTime = Date.now();
+    
+    try {
+      const r = await fetch(`${config.factory.url}/api/order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', authorization: `Bearer ${config.factory.apiKey}` },
+        body: JSON.stringify({ diner: { id: req.user.id, name: req.user.name, email: req.user.email }, order }),
+      });
+      
+      const latency = Date.now() - startTime;
+      
+      const j = await r.json();
+      if (r.ok) {
+        metrics.trackPizzaPurchase(order.items.length, true, totalPrice, latency);
+        
+        res.send({ order, reportSlowPizzaToFactoryUrl: j.reportUrl, jwt: j.jwt });
+      } else {
+        metrics.trackPizzaPurchase(order.items.length, false, 0, latency);
+        
+        res.status(500).send({ message: 'Failed to fulfill order at factory', reportPizzaCreationErrorToPizzaFactoryUrl: j.reportUrl });
+      }
+    } catch (error) {
+      const latency = Date.now() - startTime;
+      metrics.trackPizzaPurchase(order.items.length, false, 0, latency);
+      
+      throw error;
     }
   })
 );
