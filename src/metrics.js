@@ -14,7 +14,10 @@ class MetricBuilder {
       .map(([key, val]) => `${key}=${val}`)
       .join(',');
     
-    this.lines.push(`${name},source=${config.metrics.source}${tagString ? ',' + tagString : ''} value=${value} ${this.timestamp}`);
+    // Check if config.metrics exists before trying to access source
+    const source = config.metrics?.source || 'test-environment';
+    
+    this.lines.push(`${name},source=${source}${tagString ? ',' + tagString : ''} value=${value} ${this.timestamp}`);
     return this;
   }
 
@@ -52,8 +55,10 @@ class Metrics {
       pizzaCreation: [] // Array to store pizza creation latencies
     };
     
-    // Start periodic reporting (default 60 seconds)
-    this.startPeriodicReporting(60000);
+    // Only start periodic reporting if not in test environment
+    if (process.env.NODE_ENV !== 'test' && config.metrics) {
+      this.startPeriodicReporting(60000);
+    }
     
     // Bind methods that will be used as middleware
     this.requestTracker = this.requestTracker.bind(this);
@@ -177,42 +182,52 @@ class Metrics {
   
   // Send metrics to Grafana
   sendMetricToGrafana(metrics) {
+    // Skip if no metrics configuration is available (e.g., in test environment)
+    if (!config.metrics || !config.metrics.url || !config.metrics.apiKey) {
+      console.log('Metrics not sent - configuration missing');
+      return;
+    }
+    
     // Parse the URL from the configuration
-    const parsedUrl = new URL(config.metrics.url);
-    
-    const options = {
-      hostname: parsedUrl.hostname,
-      port: parsedUrl.protocol === 'https:' ? 443 : 80,
-      path: parsedUrl.pathname + parsedUrl.search,
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.metrics.apiKey}`,
-        'Content-Type': 'text/plain',
-        'Content-Length': Buffer.byteLength(metrics)
-      }
-    };
-    
-    const req = (parsedUrl.protocol === 'https:' ? https : require('http')).request(options, (res) => {
-      let responseData = '';
+    try {
+      const parsedUrl = new URL(config.metrics.url);
       
-      res.on('data', (chunk) => {
-        responseData += chunk;
-      });
-      
-      res.on('end', () => {
-        if (res.statusCode !== 204) {
-          console.error(`Failed to send metrics. Status code: ${res.statusCode}`);
-          console.error(`Response: ${responseData}`);
+      const options = {
+        hostname: parsedUrl.hostname,
+        port: parsedUrl.protocol === 'https:' ? 443 : 80,
+        path: parsedUrl.pathname + parsedUrl.search,
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${config.metrics.apiKey}`,
+          'Content-Type': 'text/plain',
+          'Content-Length': Buffer.byteLength(metrics)
         }
+      };
+      
+      const req = (parsedUrl.protocol === 'https:' ? https : require('http')).request(options, (res) => {
+        let responseData = '';
+        
+        res.on('data', (chunk) => {
+          responseData += chunk;
+        });
+        
+        res.on('end', () => {
+          if (res.statusCode !== 204) {
+            console.error(`Failed to send metrics. Status code: ${res.statusCode}`);
+            console.error(`Response: ${responseData}`);
+          }
+        });
       });
-    });
-    
-    req.on('error', (error) => {
-      console.error(`Error sending metrics: ${error.message}`);
-    });
-    
-    req.write(metrics);
-    req.end();
+      
+      req.on('error', (error) => {
+        console.error(`Error sending metrics: ${error.message}`);
+      });
+      
+      req.write(metrics);
+      req.end();
+    } catch (error) {
+      console.error(`Error preparing metrics request: ${error.message}`);
+    }
   }
   
   // Start periodic reporting
