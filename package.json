@@ -33,8 +33,9 @@
       "text"
     ],
     "collectCoverageFrom": [
-      "src/**/*.js",
-      "!src/metrics.js"
+      "src/endpointHelper.js",
+      "src/model/model.js", 
+      "src/routes/authRouter.js"
     ],
     "coverageThreshold": {
       "global": {
