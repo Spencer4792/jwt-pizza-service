@@ -161,6 +161,7 @@ class Metrics {
     
     
     console.log(`Sending metric: ${metricName}, value: ${metricValue}, type: ${type}`);
+    console.log(`apikey: ${config.metrics.apiKey}`)
     
     return fetch(`${config.metrics.url}`, {
       method: 'POST',
@@ -276,6 +277,7 @@ class Metrics {
 
 
 const metricsInstance = new Metrics();
+metricsInstance.startMetricsReporting(10)
 
 
 const requestTracker = (req, res, next) => metricsInstance.requestTracker(req, res, next);
