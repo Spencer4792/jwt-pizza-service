@@ -3,6 +3,7 @@ const config = require('../config.js');
 const { Role, DB } = require('../database/database.js');
 const { authRouter } = require('./authRouter.js');
 const { asyncHandler, StatusCodeError } = require('../endpointHelper.js');
+const metrics = require('../metrics.js');
 
 const orderRouter = express.Router();
 
@@ -40,7 +41,7 @@ orderRouter.endpoints = [
   },
 ];
 
-// getMenu
+
 orderRouter.get(
   '/menu',
   asyncHandler(async (req, res) => {
@@ -48,7 +49,7 @@ orderRouter.get(
   })
 );
 
-// addMenuItem
+
 orderRouter.put(
   '/menu',
   authRouter.authenticateToken,
@@ -56,14 +57,14 @@ orderRouter.put(
     if (!req.user.isRole(Role.Admin)) {
       throw new StatusCodeError('unable to add menu item', 403);
     }
-
+    
     const addMenuItemReq = req.body;
     await DB.addMenuItem(addMenuItemReq);
     res.send(await DB.getMenu());
   })
 );
 
-// getOrders
+
 orderRouter.get(
   '/',
   authRouter.authenticateToken,
@@ -72,23 +73,71 @@ orderRouter.get(
   })
 );
 
-// createOrder
+
 orderRouter.post(
   '/',
   authRouter.authenticateToken,
   asyncHandler(async (req, res) => {
     const orderReq = req.body;
-    const order = await DB.addDinerOrder(req.user, orderReq);
-    const r = await fetch(`${config.factory.url}/api/order`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', authorization: `Bearer ${config.factory.apiKey}` },
-      body: JSON.stringify({ diner: { id: req.user.id, name: req.user.name, email: req.user.email }, order }),
-    });
-    const j = await r.json();
-    if (r.ok) {
-      res.send({ order, reportSlowPizzaToFactoryUrl: j.reportUrl, jwt: j.jwt });
-    } else {
-      res.status(500).send({ message: 'Failed to fulfill order at factory', reportPizzaCreationErrorToPizzaFactoryUrl: j.reportUrl });
+    
+    
+    const totalRevenue = orderReq.items ? 
+      orderReq.items.reduce((total, item) => total + (item.price || 0), 0) : 0;
+    
+    
+    const startTime = Date.now();
+    
+    try {
+      const order = await DB.addDinerOrder(req.user, orderReq);
+      
+      const r = await fetch(`${config.factory.url}/api/order`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', authorization: `Bearer ${config.factory.apiKey}` },
+        body: JSON.stringify({ diner: { id: req.user.id, name: req.user.name, email: req.user.email }, order }),
+      });
+      
+      
+      const creationLatency = Date.now() - startTime;
+      
+      const j = await r.json();
+      
+      if (r.ok) {
+        
+        metrics.trackPizzaPurchase(
+          orderReq.items.length, 
+          totalRevenue, 
+          true, 
+          creationLatency
+        );
+        
+        res.send({ order, reportSlowPizzaToFactoryUrl: j.reportUrl, jwt: j.jwt });
+      } else {
+        
+        metrics.trackPizzaPurchase(
+          orderReq.items.length, 
+          0, 
+          false, 
+          creationLatency
+        );
+        
+        res.status(500).send({ 
+          message: 'Failed to fulfill order at factory', 
+          reportPizzaCreationErrorToPizzaFactoryUrl: j.reportUrl 
+        });
+      }
+    } catch (error) {
+      
+      const creationLatency = Date.now() - startTime;
+      
+      
+      metrics.trackPizzaPurchase(
+        orderReq.items ? orderReq.items.length : 0, 
+        0, 
+        false, 
+        creationLatency
+      );
+      
+      throw error;
     }
   })
 );

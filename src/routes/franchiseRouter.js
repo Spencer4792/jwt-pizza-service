@@ -55,7 +55,7 @@ franchiseRouter.endpoints = [
   },
 ];
 
-// getFranchises
+
 franchiseRouter.get(
   '/',
   asyncHandler(async (req, res) => {
@@ -63,7 +63,7 @@ franchiseRouter.get(
   })
 );
 
-// getUserFranchises
+
 franchiseRouter.get(
   '/:userId',
   authRouter.authenticateToken,
@@ -78,7 +78,7 @@ franchiseRouter.get(
   })
 );
 
-// createFranchise
+
 franchiseRouter.post(
   '/',
   authRouter.authenticateToken,
@@ -92,9 +92,10 @@ franchiseRouter.post(
   })
 );
 
-// deleteFranchise
+
 franchiseRouter.delete(
   '/:franchiseId',
+  authRouter.authenticateToken,
   asyncHandler(async (req, res) => {
     if (!req.user.isRole(Role.Admin)) {
       throw new StatusCodeError('unable to delete a franchise', 403);
@@ -106,7 +107,7 @@ franchiseRouter.delete(
   })
 );
 
-// createStore
+
 franchiseRouter.post(
   '/:franchiseId/store',
   authRouter.authenticateToken,
@@ -121,7 +122,7 @@ franchiseRouter.post(
   })
 );
 
-// deleteStore
+
 franchiseRouter.delete(
   '/:franchiseId/store/:storeId',
   authRouter.authenticateToken,

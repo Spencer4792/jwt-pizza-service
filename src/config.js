@@ -14,4 +14,9 @@ module.exports = {
     url: 'https://pizza-factory.cs329.click',
     apiKey: process.env.FACTORY_API_KEY,
   },
+  metrics: {
+    source: 'jwt-pizza-service-dev',
+    url: 'https://influx-prod-13-prod-us-east-0.grafana.net/api/v1/push/influx/write',
+    apiKey: '1212707:glc_eyJvIjoiMTM4ODQyNyIsIm4iOiJzdGFjay0xMjEyNzA3LWludGVncmF0aW9uLWp3dC1waXp6YS1tZXRyaWNzIiwiayI6Ims1NFYwazU3dmhEaTQ2WWdFMTZOMk52SiIsIm0iOnsiciI6InByb2QtdXMtZWFzdC0wIn19'
+  },
 };

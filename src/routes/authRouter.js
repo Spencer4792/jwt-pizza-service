@@ -3,6 +3,7 @@ const jwt = require('jsonwebtoken');
 const config = require('../config.js');
 const { asyncHandler } = require('../endpointHelper.js');
 const { DB, Role } = require('../database/database.js');
+const metrics = require('../metrics.js');
 
 const authRouter = express.Router();
 
@@ -44,7 +45,7 @@ async function setAuthUser(req, res, next) {
   if (token) {
     try {
       if (await DB.isLoggedIn(token)) {
-        // Check the database to make sure the token is valid.
+        
         req.user = jwt.verify(token, config.jwtSecret);
         req.user.isRole = (role) => !!req.user.roles.find((r) => r.role === role);
       }
@@ -55,7 +56,7 @@ async function setAuthUser(req, res, next) {
   next();
 }
 
-// Authenticate token
+
 authRouter.authenticateToken = (req, res, next) => {
   if (!req.user) {
     return res.status(401).send({ message: 'unauthorized' });
@@ -63,7 +64,7 @@ authRouter.authenticateToken = (req, res, next) => {
   next();
 };
 
-// register
+
 authRouter.post(
   '/',
   asyncHandler(async (req, res) => {
@@ -73,32 +74,49 @@ authRouter.post(
     }
     const user = await DB.addUser({ name, email, password, roles: [{ role: Role.Diner }] });
     const auth = await setAuth(user);
+    
+    
+    metrics.trackAuth(true, user.id);
+    
     res.json({ user: user, token: auth });
   })
 );
 
-// login
+
 authRouter.put(
   '/',
   asyncHandler(async (req, res) => {
     const { email, password } = req.body;
-    const user = await DB.getUser(email, password);
-    const auth = await setAuth(user);
-    res.json({ user: user, token: auth });
+    try {
+      const user = await DB.getUser(email, password);
+      const auth = await setAuth(user);
+      
+      
+      metrics.trackAuth(true, user.id);
+      
+      res.json({ user: user, token: auth });
+    } catch (error) {
+      
+      metrics.trackAuth(false);
+      throw error;
+    }
   })
 );
 
-// logout
+
 authRouter.delete(
   '/',
   authRouter.authenticateToken,
   asyncHandler(async (req, res) => {
+    
+    metrics.trackLogout(req.user.id);
+    
     await clearAuth(req);
     res.json({ message: 'logout successful' });
   })
 );
 
-// updateUser
+
 authRouter.put(
   '/:userId',
   authRouter.authenticateToken,
