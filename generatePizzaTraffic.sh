@@ -24,8 +24,12 @@ execute_curl() {
 
 login() {
   response=$(curl -s -X PUT $host/api/auth -d "{\"email\":\"$1\", \"password\":\"$2\"}" -H 'Content-Type: application/json')
-  token=$(echo $response | jq -r '.token')
-  echo $token
+  if echo "$response" | jq -e . >/dev/null 2>&1; then
+    token=$(echo "$response" | jq -r '.token')
+    echo $token
+  else
+    echo ""
+  fi
 }
 
 
