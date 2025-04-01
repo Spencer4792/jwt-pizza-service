@@ -115,7 +115,8 @@ class Metrics {
     return parseFloat(memoryUsage.toFixed(2));
   }
 
-  sendMetricToGrafana(metricName, metricValue, type, unit, attributes = {}) {
+  // Try the OTLP format (OpenTelemetry)
+  async sendMetricToGrafana(metricName, metricValue, type, unit, attributes = {}) {
     attributes = { ...attributes, source: config.metrics.source };
 
     const metric = {
@@ -159,29 +160,96 @@ class Metrics {
 
     const body = JSON.stringify(metric);
     
-    // Add debugging to see what's being sent
-    console.log(`Sending metric: ${metricName}, value: ${metricValue}, type: ${type}`);
+    // Enhanced debugging
+    console.log(`---------------------`);
+    console.log(`Attempting to send metric: ${metricName}, value: ${metricValue}, type: ${type}`);
+    console.log(`URL: ${config.metrics.url}`);
+    console.log(`API Key: ${config.metrics.apiKey.substring(0, 10)}...`);
     
-    return fetch(`${config.metrics.url}`, {
-      method: 'POST',
-      body: body,
-      headers: { 
-        Authorization: `Bearer ${config.metrics.apiKey}`, 
-        'Content-Type': 'application/json' 
-      },
-    })
-    .then((response) => {
+    try {
+      // OTLP API approach
+      const response = await fetch(`${config.metrics.url}`, {
+        method: 'POST',
+        body: body,
+        headers: { 
+          Authorization: `Bearer ${config.metrics.apiKey}`, 
+          'Content-Type': 'application/json' 
+        },
+      });
+      
+      console.log(`Response status: ${response.status}`);
+      
       if (!response.ok) {
-        return response.text().then((text) => {
-          console.error(`Failed to push metrics data to Grafana: ${text}\n${body}`);
-        });
+        const text = await response.text();
+        console.error(`Failed to push metrics data to Grafana: ${text}`);
+        
+        // Try an alternative approach if OTLP fails
+        if (config.metrics.url.includes('otlp')) {
+          console.log("OTLP approach failed, trying InfluxDB API approach...");
+          await this.sendMetricToGrafanaInfluxDB(metricName, metricValue, attributes);
+        }
       } else {
-        console.log(`Successfully sent metric: ${metricName}`);
+        console.log(`Successfully sent metric: ${metricName} with value ${metricValue}`);
+        return true;
       }
-    })
-    .catch((error) => {
-      console.error('Error pushing metrics:', error);
-    });
+    } catch (error) {
+      console.error(`Network error sending metric ${metricName}:`, error.message);
+      
+      // Try alternative approach if OTLP throws an error
+      if (config.metrics.url.includes('otlp')) {
+        console.log("OTLP approach errored, trying InfluxDB API approach...");
+        return await this.sendMetricToGrafanaInfluxDB(metricName, metricValue, attributes);
+      }
+    }
+    
+    return false;
+  }
+  
+  // Alternative approach using InfluxDB Line Protocol
+  async sendMetricToGrafanaInfluxDB(metricName, metricValue, attributes = {}) {
+    try {
+      // This is a more common approach for sending metrics to Grafana Cloud
+      // Construct InfluxDB line protocol format
+      const tags = Object.entries(attributes)
+        .map(([key, value]) => `${key}=${value}`)
+        .join(',');
+        
+      const lineProtocol = `${metricName},${tags} value=${metricValue} ${Date.now() * 1000000}`;
+      
+      console.log("Trying InfluxDB format:", lineProtocol);
+      
+      // Construct a URL that looks like the one in the instructions
+      let influxUrl = config.metrics.url;
+      if (influxUrl.includes('otlp')) {
+        // Try to derive an InfluxDB compatible URL
+        influxUrl = influxUrl.replace('otlp-gateway', 'influx-prod-13').replace('/otlp/v1/metrics', '/api/v1/push/influx/write');
+      }
+      
+      console.log(`Using InfluxDB URL: ${influxUrl}`);
+      
+      const response = await fetch(influxUrl, {
+        method: 'POST',
+        body: lineProtocol,
+        headers: {
+          'Authorization': `Bearer ${config.metrics.apiKey}`,
+          'Content-Type': 'text/plain'
+        }
+      });
+      
+      console.log(`InfluxDB response status: ${response.status}`);
+      
+      if (!response.ok) {
+        const text = await response.text();
+        console.error(`Failed to push metrics via InfluxDB: ${text}`);
+        return false;
+      } else {
+        console.log(`Successfully sent metric via InfluxDB: ${metricName}`);
+        return true;
+      }
+    } catch (error) {
+      console.error(`Network error sending metric via InfluxDB ${metricName}:`, error.message);
+      return false;
+    }
   }
 
   httpMetrics() {
@@ -274,8 +342,10 @@ class Metrics {
   }
 }
 
+// Create a singleton instance
 const metricsInstance = new Metrics();
 
+// Create bound functions for module exports
 const requestTracker = (req, res, next) => metricsInstance.requestTracker(req, res, next);
 const trackAuth = (success, userId) => metricsInstance.trackAuth(success, userId);
 const trackLogout = (userId) => metricsInstance.trackLogout(userId);
@@ -284,6 +354,7 @@ const trackPizzaPurchase = (quantity, revenue, success, latency) =>
 const startMetricsReporting = (period) => metricsInstance.startMetricsReporting(period);
 const stopMetricsReporting = () => metricsInstance.stopMetricsReporting();
 
+// Export the singleton instance and bound functions
 module.exports = {
   metrics: metricsInstance,
   requestTracker,
