@@ -32,6 +32,10 @@
       "lcov",
       "text"
     ],
+    "collectCoverageFrom": [
+      "src/**/*.js",
+      "!src/metrics.js"
+    ],
     "coverageThreshold": {
       "global": {
         "lines": 80
