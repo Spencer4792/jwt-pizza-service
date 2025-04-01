@@ -4,16 +4,14 @@ const orderRouter = require('./routes/orderRouter.js');
 const franchiseRouter = require('./routes/franchiseRouter.js');
 const version = require('./version.json');
 const config = require('./config.js');
-const metrics = require('./metrics.js');
+const { metrics, requestTracker, startMetricsReporting } = require('./metrics.js');
 
 const app = express();
-
 
 app.use(express.json());
 app.use(setAuthUser);
 
-
-app.use(metrics.requestTracker);
+app.use(requestTracker);
 
 app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Origin', req.headers.origin || '*');
@@ -50,25 +48,20 @@ app.use('*', (req, res) => {
   });
 });
 
-
 app.use((err, req, res, next) => {
   res.status(err.statusCode ?? 500).json({ message: err.message, stack: err.stack });
   next();
 });
 
-
 let metricsReporter;
 app.on('ready', () => {
   console.log('Starting metrics reporting');
-  metricsReporter = metrics.startMetricsReporting();
+  metricsReporter = startMetricsReporting();
 });
-
 
 process.on('SIGTERM', () => {
   console.log('Stopping metrics reporting');
-  if (metricsReporter) {
-    clearInterval(metricsReporter);
-  }
+  metrics.stopMetricsReporting();
 });
 
 module.exports = app;

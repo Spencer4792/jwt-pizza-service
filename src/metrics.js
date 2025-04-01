@@ -1,267 +1,295 @@
 const config = require('./config');
 const os = require('os');
 
-
-const metrics = {
-  http: {
-    requests: { total: 0, get: 0, post: 0, put: 0, delete: 0 },
-    endpoints: {}
-  },
-  auth: {
-    successful: 0,
-    failed: 0
-  },
-  users: {
-    active: new Set()
-  },
-  system: {
-    cpu: 0,
-    memory: 0
-  },
-  pizza: {
-    sold: 0,
-    revenue: 0,
-    failures: 0
-  },
-  latency: {
-    endpoints: {},
-    pizzaCreation: []
-  }
-};
-
-
-function requestTracker(req, res, next) {
-  const startTime = Date.now();
-  
-  
-  metrics.http.requests.total++;
-  
-  
-  const method = req.method.toLowerCase();
-  if (metrics.http.requests[method] !== undefined) {
-    metrics.http.requests[method]++;
-  }
-  
-  
-  const endpoint = `${req.method} ${req.path}`;
-  if (!metrics.http.endpoints[endpoint]) {
-    metrics.http.endpoints[endpoint] = 0;
-  }
-  metrics.http.endpoints[endpoint]++;
-  
-  
-  res.on('finish', () => {
-    const duration = Date.now() - startTime;
-    if (!metrics.latency.endpoints[endpoint]) {
-      metrics.latency.endpoints[endpoint] = [];
-    }
-    metrics.latency.endpoints[endpoint].push(duration);
-    
-    
-    if (metrics.latency.endpoints[endpoint].length > 100) {
-      metrics.latency.endpoints[endpoint].shift();
-    }
-  });
-  
-  next();
-}
-
-
-function trackAuth(success, userId = null) {
-  if (success) {
-    metrics.auth.successful++;
-    if (userId) {
-      metrics.users.active.add(userId);
-    }
-  } else {
-    metrics.auth.failed++;
-  }
-}
-
-
-function trackLogout(userId) {
-  if (userId) {
-    metrics.users.active.delete(userId);
-  }
-}
-
-
-function trackPizzaPurchase(quantity, revenue, success, latency) {
-  if (success) {
-    metrics.pizza.sold += quantity;
-    metrics.pizza.revenue += revenue;
-  } else {
-    metrics.pizza.failures++;
-  }
-  
-  metrics.latency.pizzaCreation.push(latency);
-  
-  
-  if (metrics.latency.pizzaCreation.length > 100) {
-    metrics.latency.pizzaCreation.shift();
-  }
-}
-
-
-function getCpuUsagePercentage() {
-  const cpuUsage = os.loadavg()[0] / os.cpus().length;
-  return parseFloat((cpuUsage * 100).toFixed(2));
-}
-
-
-function getMemoryUsagePercentage() {
-  const totalMemory = os.totalmem();
-  const freeMemory = os.freemem();
-  const usedMemory = totalMemory - freeMemory;
-  const memoryUsage = (usedMemory / totalMemory) * 100;
-  return parseFloat(memoryUsage.toFixed(2));
-}
-
-
-function sendMetricToGrafana(metricName, metricValue, type, unit, attributes = {}) {
-  attributes = { ...attributes, source: config.metrics.source };
-
-  const metric = {
-    resourceMetrics: [
-      {
-        scopeMetrics: [
-          {
-            metrics: [
-              {
-                name: metricName,
-                unit: unit,
-                [type]: {
-                  dataPoints: [
-                    {
-                      asInt: Math.round(metricValue),
-                      timeUnixNano: Date.now() * 1000000,
-                      attributes: [],
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        ],
+class Metrics {
+  constructor() {
+    this.data = {
+      http: {
+        requests: { total: 0, get: 0, post: 0, put: 0, delete: 0 },
+        endpoints: {}
       },
-    ],
-  };
+      auth: {
+        successful: 0,
+        failed: 0
+      },
+      users: {
+        active: new Set()
+      },
+      system: {
+        cpu: 0,
+        memory: 0
+      },
+      pizza: {
+        sold: 0,
+        revenue: 0,
+        failures: 0
+      },
+      latency: {
+        endpoints: {},
+        pizzaCreation: []
+      }
+    };
 
-  if (type === 'sum') {
-    metric.resourceMetrics[0].scopeMetrics[0].metrics[0][type].aggregationTemporality = 'AGGREGATION_TEMPORALITY_CUMULATIVE';
-    metric.resourceMetrics[0].scopeMetrics[0].metrics[0][type].isMonotonic = true;
+    this.reporterInterval = null;
   }
 
-  
-  Object.keys(attributes).forEach((key) => {
-    metric.resourceMetrics[0].scopeMetrics[0].metrics[0][type].dataPoints[0].attributes.push({
-      key: key,
-      value: { stringValue: attributes[key] },
+  requestTracker(req, res, next) {
+    const startTime = Date.now();
+    
+    // Track total requests
+    this.data.http.requests.total++;
+    
+    // Track request by method
+    const method = req.method.toLowerCase();
+    if (this.data.http.requests[method] !== undefined) {
+      this.data.http.requests[method]++;
+    }
+    
+    // Track endpoint usage
+    const endpoint = `${req.method} ${req.path}`;
+    if (!this.data.http.endpoints[endpoint]) {
+      this.data.http.endpoints[endpoint] = 0;
+    }
+    this.data.http.endpoints[endpoint]++;
+    
+    // Track response latency
+    res.on('finish', () => {
+      const duration = Date.now() - startTime;
+      if (!this.data.latency.endpoints[endpoint]) {
+        this.data.latency.endpoints[endpoint] = [];
+      }
+      this.data.latency.endpoints[endpoint].push(duration);
+      
+      // Limit array size to avoid memory issues
+      if (this.data.latency.endpoints[endpoint].length > 100) {
+        this.data.latency.endpoints[endpoint].shift();
+      }
     });
-  });
+    
+    next();
+  }
 
-  const body = JSON.stringify(metric);
-  
-  return fetch(`${config.metrics.url}`, {
-    method: 'POST',
-    body: body,
-    headers: { 
-      Authorization: `Bearer ${config.metrics.apiKey}`, 
-      'Content-Type': 'application/json' 
-    },
-  })
-  .then((response) => {
-    if (!response.ok) {
-      return response.text().then((text) => {
-        console.error(`Failed to push metrics data to Grafana: ${text}\n${body}`);
+  trackAuth(success, userId = null) {
+    if (success) {
+      this.data.auth.successful++;
+      if (userId) {
+        this.data.users.active.add(userId);
+      }
+    } else {
+      this.data.auth.failed++;
+    }
+  }
+
+  trackLogout(userId) {
+    if (userId) {
+      this.data.users.active.delete(userId);
+    }
+  }
+
+  trackPizzaPurchase(quantity, revenue, success, latency) {
+    if (success) {
+      this.data.pizza.sold += quantity;
+      this.data.pizza.revenue += revenue;
+    } else {
+      this.data.pizza.failures++;
+    }
+    
+    this.data.latency.pizzaCreation.push(latency);
+    
+    // Limit array size to avoid memory issues
+    if (this.data.latency.pizzaCreation.length > 100) {
+      this.data.latency.pizzaCreation.shift();
+    }
+  }
+
+  getCpuUsagePercentage() {
+    const cpuUsage = os.loadavg()[0] / os.cpus().length;
+    return parseFloat((cpuUsage * 100).toFixed(2));
+  }
+
+  getMemoryUsagePercentage() {
+    const totalMemory = os.totalmem();
+    const freeMemory = os.freemem();
+    const usedMemory = totalMemory - freeMemory;
+    const memoryUsage = (usedMemory / totalMemory) * 100;
+    return parseFloat(memoryUsage.toFixed(2));
+  }
+
+  sendMetricToGrafana(metricName, metricValue, type, unit, attributes = {}) {
+    attributes = { ...attributes, source: config.metrics.source };
+
+    const metric = {
+      resourceMetrics: [
+        {
+          scopeMetrics: [
+            {
+              metrics: [
+                {
+                  name: metricName,
+                  unit: unit,
+                  [type]: {
+                    dataPoints: [
+                      {
+                        asInt: Math.round(metricValue),
+                        timeUnixNano: Date.now() * 1000000,
+                        attributes: [],
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    if (type === 'sum') {
+      metric.resourceMetrics[0].scopeMetrics[0].metrics[0][type].aggregationTemporality = 'AGGREGATION_TEMPORALITY_CUMULATIVE';
+      metric.resourceMetrics[0].scopeMetrics[0].metrics[0][type].isMonotonic = true;
+    }
+
+    // Add attributes
+    Object.keys(attributes).forEach((key) => {
+      metric.resourceMetrics[0].scopeMetrics[0].metrics[0][type].dataPoints[0].attributes.push({
+        key: key,
+        value: { stringValue: attributes[key] },
       });
+    });
+
+    const body = JSON.stringify(metric);
+    
+    // Add debugging to see what's being sent
+    console.log(`Sending metric: ${metricName}, value: ${metricValue}, type: ${type}`);
+    
+    return fetch(`${config.metrics.url}`, {
+      method: 'POST',
+      body: body,
+      headers: { 
+        Authorization: `Bearer ${config.metrics.apiKey}`, 
+        'Content-Type': 'application/json' 
+      },
+    })
+    .then((response) => {
+      if (!response.ok) {
+        return response.text().then((text) => {
+          console.error(`Failed to push metrics data to Grafana: ${text}\n${body}`);
+        });
+      } else {
+        console.log(`Successfully sent metric: ${metricName}`);
+      }
+    })
+    .catch((error) => {
+      console.error('Error pushing metrics:', error);
+    });
+  }
+
+  httpMetrics() {
+    // Total requests
+    this.sendMetricToGrafana('http_requests_total', this.data.http.requests.total, 'sum', '1');
+    
+    // Requests by method
+    Object.entries(this.data.http.requests).forEach(([method, count]) => {
+      if (method !== 'total') {
+        this.sendMetricToGrafana('http_requests_by_method', count, 'sum', '1', { method });
+      }
+    });
+
+    // Average latency by endpoint
+    Object.entries(this.data.latency.endpoints).forEach(([endpoint, latencies]) => {
+      if (latencies.length > 0) {
+        const avgLatency = latencies.reduce((sum, val) => sum + val, 0) / latencies.length;
+        this.sendMetricToGrafana('http_request_latency', avgLatency, 'gauge', 'ms', { endpoint });
+      }
+    });
+  }
+
+  systemMetrics() {
+    // Update CPU and memory metrics
+    this.data.system.cpu = this.getCpuUsagePercentage();
+    this.data.system.memory = this.getMemoryUsagePercentage();
+    
+    // Send to Grafana
+    this.sendMetricToGrafana('system_cpu_usage', this.data.system.cpu, 'gauge', '%');
+    this.sendMetricToGrafana('system_memory_usage', this.data.system.memory, 'gauge', '%');
+  }
+
+  userMetrics() {
+    // Active users count
+    this.sendMetricToGrafana('active_users', this.data.users.active.size, 'gauge', '1');
+  }
+
+  authMetrics() {
+    // Authentication attempts
+    this.sendMetricToGrafana('auth_successful', this.data.auth.successful, 'sum', '1');
+    this.sendMetricToGrafana('auth_failed', this.data.auth.failed, 'sum', '1');
+  }
+
+  pizzaMetrics() {
+    // Pizzas sold
+    this.sendMetricToGrafana('pizzas_sold', this.data.pizza.sold, 'sum', '1');
+    
+    // Pizza revenue
+    this.sendMetricToGrafana('pizza_revenue', this.data.pizza.revenue, 'sum', 'usd');
+    
+    // Pizza creation failures
+    this.sendMetricToGrafana('pizza_creation_failures', this.data.pizza.failures, 'sum', '1');
+    
+    // Pizza creation latency
+    if (this.data.latency.pizzaCreation.length > 0) {
+      const avgLatency = this.data.latency.pizzaCreation.reduce((sum, val) => sum + val, 0) / this.data.latency.pizzaCreation.length;
+      this.sendMetricToGrafana('pizza_creation_latency', avgLatency, 'gauge', 'ms');
     }
-  })
-  .catch((error) => {
-    console.error('Error pushing metrics:', error);
-  });
-}
+  }
 
-
-function httpMetrics() {
-  
-  sendMetricToGrafana('http_requests_total', metrics.http.requests.total, 'sum', '1');
-  
-  
-  Object.entries(metrics.http.requests).forEach(([method, count]) => {
-    if (method !== 'total') {
-      sendMetricToGrafana('http_requests_by_method', count, 'sum', '1', { method });
+  startMetricsReporting(period = 10000) {
+    console.log(`Starting metrics reporting every ${period/1000} seconds`);
+    
+    // Clear any existing interval
+    if (this.reporterInterval) {
+      clearInterval(this.reporterInterval);
     }
-  });
-
+    
+    this.reporterInterval = setInterval(() => {
+      try {
+        this.httpMetrics();
+        this.systemMetrics();
+        this.userMetrics();
+        this.authMetrics();
+        this.pizzaMetrics();
+      } catch (error) {
+        console.error('Error reporting metrics:', error);
+      }
+    }, period);
+    
+    return this.reporterInterval;
+  }
   
-  Object.entries(metrics.latency.endpoints).forEach(([endpoint, latencies]) => {
-    if (latencies.length > 0) {
-      const avgLatency = latencies.reduce((sum, val) => sum + val, 0) / latencies.length;
-      sendMetricToGrafana('http_request_latency', avgLatency, 'gauge', 'ms', { endpoint });
+  stopMetricsReporting() {
+    if (this.reporterInterval) {
+      clearInterval(this.reporterInterval);
+      this.reporterInterval = null;
+      console.log('Metrics reporting stopped');
     }
-  });
-}
-
-function systemMetrics() {
-  
-  metrics.system.cpu = getCpuUsagePercentage();
-  metrics.system.memory = getMemoryUsagePercentage();
-  
-  
-  sendMetricToGrafana('system_cpu_usage', metrics.system.cpu, 'gauge', '%');
-  sendMetricToGrafana('system_memory_usage', metrics.system.memory, 'gauge', '%');
-}
-
-function userMetrics() {
-  
-  sendMetricToGrafana('active_users', metrics.users.active.size, 'gauge', '1');
-}
-
-function authMetrics() {
-  
-  sendMetricToGrafana('auth_successful', metrics.auth.successful, 'sum', '1');
-  sendMetricToGrafana('auth_failed', metrics.auth.failed, 'sum', '1');
-}
-
-function pizzaMetrics() {
-  
-  sendMetricToGrafana('pizzas_sold', metrics.pizza.sold, 'sum', '1');
-  
-  
-  sendMetricToGrafana('pizza_revenue', metrics.pizza.revenue, 'sum', 'usd');
-  
-  
-  sendMetricToGrafana('pizza_creation_failures', metrics.pizza.failures, 'sum', '1');
-  
-  
-  if (metrics.latency.pizzaCreation.length > 0) {
-    const avgLatency = metrics.latency.pizzaCreation.reduce((sum, val) => sum + val, 0) / metrics.latency.pizzaCreation.length;
-    sendMetricToGrafana('pizza_creation_latency', avgLatency, 'gauge', 'ms');
   }
 }
 
+const metricsInstance = new Metrics();
 
-function startMetricsReporting(period = 10000) {
-  console.log(`Starting metrics reporting every ${period/1000} seconds`);
-  
-  return setInterval(() => {
-    try {
-      httpMetrics();
-      systemMetrics();
-      userMetrics();
-      authMetrics();
-      pizzaMetrics();
-    } catch (error) {
-      console.error('Error reporting metrics:', error);
-    }
-  }, period);
-}
+const requestTracker = (req, res, next) => metricsInstance.requestTracker(req, res, next);
+const trackAuth = (success, userId) => metricsInstance.trackAuth(success, userId);
+const trackLogout = (userId) => metricsInstance.trackLogout(userId);
+const trackPizzaPurchase = (quantity, revenue, success, latency) => 
+  metricsInstance.trackPizzaPurchase(quantity, revenue, success, latency);
+const startMetricsReporting = (period) => metricsInstance.startMetricsReporting(period);
+const stopMetricsReporting = () => metricsInstance.stopMetricsReporting();
 
 module.exports = {
+  metrics: metricsInstance,
   requestTracker,
   trackAuth,
   trackLogout,
   trackPizzaPurchase,
-  startMetricsReporting
+  startMetricsReporting,
+  stopMetricsReporting
 };

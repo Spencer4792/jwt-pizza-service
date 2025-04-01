@@ -3,7 +3,7 @@ const config = require('../config.js');
 const { Role, DB } = require('../database/database.js');
 const { authRouter } = require('./authRouter.js');
 const { asyncHandler, StatusCodeError } = require('../endpointHelper.js');
-const metrics = require('../metrics.js');
+const { trackPizzaPurchase } = require('../metrics.js');
 
 const orderRouter = express.Router();
 
@@ -103,7 +103,7 @@ orderRouter.post(
       
       if (r.ok) {
         
-        metrics.trackPizzaPurchase(
+        trackPizzaPurchase(
           orderReq.items.length, 
           totalRevenue, 
           true, 
@@ -113,7 +113,7 @@ orderRouter.post(
         res.send({ order, reportSlowPizzaToFactoryUrl: j.reportUrl, jwt: j.jwt });
       } else {
         
-        metrics.trackPizzaPurchase(
+        trackPizzaPurchase(
           orderReq.items.length, 
           0, 
           false, 
@@ -130,7 +130,7 @@ orderRouter.post(
       const creationLatency = Date.now() - startTime;
       
       
-      metrics.trackPizzaPurchase(
+      trackPizzaPurchase(
         orderReq.items ? orderReq.items.length : 0, 
         0, 
         false, 
