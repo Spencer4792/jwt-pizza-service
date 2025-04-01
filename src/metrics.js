@@ -31,20 +31,19 @@ class Metrics {
     };
 
     this.reporterInterval = null;
+    // Check if running in test environment
+    this.enabled = process.env.NODE_ENV !== 'test';
   }
 
   requestTracker(req, res, next) {
     const startTime = Date.now();
     
-    
     this.data.http.requests.total++;
-    
     
     const method = req.method.toLowerCase();
     if (this.data.http.requests[method] !== undefined) {
       this.data.http.requests[method]++;
     }
-    
     
     const endpoint = `${req.method} ${req.path}`;
     if (!this.data.http.endpoints[endpoint]) {
@@ -52,14 +51,12 @@ class Metrics {
     }
     this.data.http.endpoints[endpoint]++;
     
-    
     res.on('finish', () => {
       const duration = Date.now() - startTime;
       if (!this.data.latency.endpoints[endpoint]) {
         this.data.latency.endpoints[endpoint] = [];
       }
       this.data.latency.endpoints[endpoint].push(duration);
-      
       
       if (this.data.latency.endpoints[endpoint].length > 100) {
         this.data.latency.endpoints[endpoint].shift();
@@ -96,7 +93,6 @@ class Metrics {
     
     this.data.latency.pizzaCreation.push(latency);
     
-    
     if (this.data.latency.pizzaCreation.length > 100) {
       this.data.latency.pizzaCreation.shift();
     }
@@ -116,6 +112,12 @@ class Metrics {
   }
 
   sendMetricToGrafana(metricName, metricValue, type, unit, attributes = {}) {
+    // Check if metrics config exists before proceeding
+    if (!config.metrics) {
+      console.warn('Metrics configuration is missing. Skipping metric send.');
+      return Promise.resolve(); // Return a resolved promise to maintain the promise chain
+    }
+    
     attributes = { ...attributes, source: config.metrics.source };
 
     const metric = {
@@ -148,7 +150,6 @@ class Metrics {
       metric.resourceMetrics[0].scopeMetrics[0].metrics[0][type].aggregationTemporality = 'AGGREGATION_TEMPORALITY_CUMULATIVE';
       metric.resourceMetrics[0].scopeMetrics[0].metrics[0][type].isMonotonic = true;
     }
-
     
     Object.keys(attributes).forEach((key) => {
       metric.resourceMetrics[0].scopeMetrics[0].metrics[0][type].dataPoints[0].attributes.push({
@@ -159,9 +160,8 @@ class Metrics {
 
     const body = JSON.stringify(metric);
     
-    
     console.log(`Sending metric: ${metricName}, value: ${metricValue}, type: ${type}`);
-    console.log(`apikey: ${config.metrics.apiKey}`)
+    console.log(`apikey: ${config.metrics.apiKey}`);
     
     return fetch(`${config.metrics.url}`, {
       method: 'POST',
@@ -186,16 +186,13 @@ class Metrics {
   }
 
   httpMetrics() {
-    
     this.sendMetricToGrafana('http_requests_total', this.data.http.requests.total, 'sum', '1');
-    
     
     Object.entries(this.data.http.requests).forEach(([method, count]) => {
       if (method !== 'total') {
         this.sendMetricToGrafana('http_requests_by_method', count, 'sum', '1', { method });
       }
     });
-
     
     Object.entries(this.data.latency.endpoints).forEach(([endpoint, latencies]) => {
       if (latencies.length > 0) {
@@ -206,36 +203,28 @@ class Metrics {
   }
 
   systemMetrics() {
-    
     this.data.system.cpu = this.getCpuUsagePercentage();
     this.data.system.memory = this.getMemoryUsagePercentage();
-    
     
     this.sendMetricToGrafana('system_cpu_usage', this.data.system.cpu, 'gauge', '%');
     this.sendMetricToGrafana('system_memory_usage', this.data.system.memory, 'gauge', '%');
   }
 
   userMetrics() {
-    
     this.sendMetricToGrafana('active_users', this.data.users.active.size, 'gauge', '1');
   }
 
   authMetrics() {
-    
     this.sendMetricToGrafana('auth_successful', this.data.auth.successful, 'sum', '1');
     this.sendMetricToGrafana('auth_failed', this.data.auth.failed, 'sum', '1');
   }
 
   pizzaMetrics() {
-    
     this.sendMetricToGrafana('pizzas_sold', this.data.pizza.sold, 'sum', '1');
-    
     
     this.sendMetricToGrafana('pizza_revenue', this.data.pizza.revenue, 'sum', 'usd');
     
-    
     this.sendMetricToGrafana('pizza_creation_failures', this.data.pizza.failures, 'sum', '1');
-    
     
     if (this.data.latency.pizzaCreation.length > 0) {
       const avgLatency = this.data.latency.pizzaCreation.reduce((sum, val) => sum + val, 0) / this.data.latency.pizzaCreation.length;
@@ -244,8 +233,13 @@ class Metrics {
   }
 
   startMetricsReporting(period = 10000) {
-    console.log(`Starting metrics reporting every ${period/1000} seconds`);
+    // Don't run metrics reporting in test environment
+    if (process.env.NODE_ENV === 'test') {
+      console.log('Metrics reporting disabled in test environment');
+      return null;
+    }
     
+    console.log(`Starting metrics reporting every ${period/1000} seconds`);
     
     if (this.reporterInterval) {
       clearInterval(this.reporterInterval);
@@ -275,10 +269,11 @@ class Metrics {
   }
 }
 
-
+// Only start metrics reporting if not in test environment
 const metricsInstance = new Metrics();
-metricsInstance.startMetricsReporting(10)
-
+if (process.env.NODE_ENV !== 'test') {
+  metricsInstance.startMetricsReporting(10);
+}
 
 const requestTracker = (req, res, next) => metricsInstance.requestTracker(req, res, next);
 const trackAuth = (success, userId) => metricsInstance.trackAuth(success, userId);
@@ -287,7 +282,6 @@ const trackPizzaPurchase = (quantity, revenue, success, latency) =>
   metricsInstance.trackPizzaPurchase(quantity, revenue, success, latency);
 const startMetricsReporting = (period) => metricsInstance.startMetricsReporting(period);
 const stopMetricsReporting = () => metricsInstance.stopMetricsReporting();
-
 
 module.exports = {
   metrics: metricsInstance,
