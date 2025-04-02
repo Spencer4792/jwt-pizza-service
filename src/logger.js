@@ -75,17 +75,17 @@ class Logger {
       type
     };
     
-    // Create values for this log event
+    // Create values for this log event - THIS IS THE KEY FIX
+    // Loki expects values to be an array of arrays, where each inner array is [timestamp, message]
     const values = [
-      this.nowString(),
-      JSON.stringify(data)
+      [this.nowString(), JSON.stringify(data)]
     ];
     
     // Build the Loki-compatible log event
     const logEvent = {
       streams: [{
         stream: labels,
-        values: [values]
+        values: values  // Now properly formatted for Loki
       }]
     };
     
