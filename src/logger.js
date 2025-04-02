@@ -2,6 +2,11 @@ const config = require('./config.js');
 const fetch = require('node-fetch');
 
 class Logger {
+  constructor() {
+    // Check if running in test environment
+    this.enabled = process.env.NODE_ENV !== 'test';
+  }
+
   // HTTP request logging middleware
   httpLogger = (req, res, next) => {
     // Store original send method
@@ -29,7 +34,7 @@ class Logger {
       const level = this.statusToLogLevel(res.statusCode);
       
       // Log the HTTP request
-      this.log(level, 'http', logData);
+      this.sendLogToGrafana('http', level, logData);
       
       // Restore original send method and call it
       res.send = originalSend;
@@ -41,68 +46,42 @@ class Logger {
   
   // Log database queries
   dbLogger = (sql, params) => {
-    this.log('info', 'database', {
+    const logData = {
       query: sql,
       params: this.sanitize(params)
-    });
+    };
+    
+    this.sendLogToGrafana('database', 'info', logData);
   };
   
   // Log factory service requests
   factoryLogger = (method, url, requestBody, status, responseBody) => {
-    this.log('info', 'factory', {
+    const logData = {
       method,
       url,
       requestBody: this.sanitize(requestBody),
       statusCode: status,
       responseBody: this.sanitize(responseBody)
-    });
+    };
+    
+    this.sendLogToGrafana('factory', 'info', logData);
   };
   
   // Log unhandled exceptions
   errorLogger = (err) => {
-    this.log('error', 'exception', {
+    const logData = {
       message: err.message,
       stack: err.stack
-    });
+    };
+    
+    this.sendLogToGrafana('exception', 'error', logData);
   };
-  
-  // Generic logging function
-  log(level, type, data) {
-    // Create labels for this log event
-    const labels = {
-      component: config.logging.source,
-      level,
-      type
-    };
-    
-    // Create values for this log event - THIS IS THE KEY FIX
-    // Loki expects values to be an array of arrays, where each inner array is [timestamp, message]
-    const values = [
-      [this.nowString(), JSON.stringify(data)]
-    ];
-    
-    // Build the Loki-compatible log event
-    const logEvent = {
-      streams: [{
-        stream: labels,
-        values: values  // Now properly formatted for Loki
-      }]
-    };
-    
-    // Send the log event to Grafana Loki
-    this.sendLogToGrafana(logEvent);
-  }
   
   // Helper method to map HTTP status codes to log levels
   statusToLogLevel(statusCode) {
     if (statusCode >= 500) return 'error';
     if (statusCode >= 400) return 'warn';
     return 'info';
-  }
-  
-  // Generate timestamp in nanoseconds (Loki format)
-  nowString() {
-    return (Date.now() * 1000000).toString();
   }
   
   // Sanitize sensitive data
@@ -150,20 +129,69 @@ class Logger {
     return sanitized;
   }
   
-  // Send log to Grafana Loki
-  sendLogToGrafana(event) {
-    const body = JSON.stringify(event);
+  // Send log to Grafana Loki - following the pattern of your metrics implementation
+  sendLogToGrafana(type, level, logData) {
+    // Skip if running in test environment
+    if (!this.enabled) {
+      return Promise.resolve();
+    }
+
+    // Check if logging config exists
+    if (!config.logging) {
+      console.warn('Logging configuration is missing. Skipping log send.');
+      return Promise.resolve();
+    }
+
+    // Format timestamp
+    const timestamp = (Date.now() * 1000000).toString();
     
-    fetch(config.logging.url, {
+    // Format log message
+    const logMessage = JSON.stringify(logData);
+    
+    // Create stream labels
+    const streamLabels = {
+      component: config.logging.source,
+      level: level,
+      type: type
+    };
+    
+    // Build the Loki-compatible log event
+    const logEvent = {
+      streams: [{
+        stream: streamLabels,
+        values: [
+          [timestamp, logMessage]
+        ]
+      }]
+    };
+    
+    console.log(`Sending log: type=${type}, level=${level}`);
+    
+    return fetch(config.logging.url, {
       method: 'post',
-      body,
+      body: JSON.stringify(logEvent),
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${config.logging.userId}:${config.logging.apiKey}`
       }
-    }).catch(err => {
-      console.error('Failed to send log to Grafana:', err.message);
+    })
+    .then((response) => {
+      if (!response.ok) {
+        return response.text().then((text) => {
+          console.error(`Failed to push log data to Grafana: ${text}`);
+        });
+      } else {
+        console.log(`Successfully sent log: type=${type}, level=${level}`);
+      }
+    })
+    .catch((error) => {
+      console.error('Error pushing log:', error);
     });
+  }
+  
+  // Generic log method that other components can use directly
+  log(level, type, message) {
+    this.sendLogToGrafana(type, level, {message: message});
   }
 }
 
