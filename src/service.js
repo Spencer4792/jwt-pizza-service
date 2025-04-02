@@ -5,12 +5,15 @@ const franchiseRouter = require('./routes/franchiseRouter.js');
 const version = require('./version.json');
 const config = require('./config.js');
 const { metrics, requestTracker, startMetricsReporting } = require('./metrics.js');
+const logger = require('./logger.js');
 
 const app = express();
 
 app.use(express.json());
 app.use(setAuthUser);
 
+// Add logger middleware before request tracker
+app.use(logger.httpLogger);
 app.use(requestTracker);
 
 app.use((req, res, next) => {
@@ -48,8 +51,17 @@ app.use('*', (req, res) => {
   });
 });
 
+// Error handling middleware with logging
 app.use((err, req, res, next) => {
-  res.status(err.statusCode ?? 500).json({ message: err.message, stack: err.stack });
+  // Log the error
+  logger.errorLogger(err);
+  
+  // Send error response
+  res.status(err.statusCode ?? 500).json({ 
+    message: err.message, 
+    stack: err.stack 
+  });
+  
   next();
 });
 

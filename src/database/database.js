@@ -4,6 +4,8 @@ const config = require('../config.js');
 const { StatusCodeError } = require('../endpointHelper.js');
 const { Role } = require('../model/model.js');
 const dbModel = require('./dbModel.js');
+const logger = require('../logger.js');
+
 class DB {
   constructor() {
     this.initialized = this.initializeDatabase();
@@ -285,8 +287,22 @@ class DB {
   }
 
   async query(connection, sql, params) {
-    const [results] = await connection.execute(sql, params);
-    return results;
+    // Log the database query
+    logger.dbLogger(sql, params);
+    
+    try {
+      const [results] = await connection.execute(sql, params);
+      return results;
+    } catch (error) {
+      // Log any database errors
+      logger.log('error', 'database', {
+        query: sql,
+        params: logger.sanitize(params),
+        error: error.message
+      });
+      
+      throw error;
+    }
   }
 
   async getID(connection, key, value, table) {
@@ -323,12 +339,20 @@ class DB {
       try {
         const dbExists = await this.checkDatabaseExists(connection);
         console.log(dbExists ? 'Database exists' : 'Database does not exist, creating it');
+        
+        // Log database initialization
+        logger.log('info', 'database', {
+          message: dbExists ? 'Database exists' : 'Database does not exist, creating it'
+        });
 
         await connection.query(`CREATE DATABASE IF NOT EXISTS ${config.db.connection.database}`);
         await connection.query(`USE ${config.db.connection.database}`);
 
         if (!dbExists) {
           console.log('Successfully created database');
+          logger.log('info', 'database', { 
+            message: 'Successfully created database' 
+          });
         }
 
         for (const statement of dbModel.tableCreateStatements) {
@@ -338,12 +362,21 @@ class DB {
         if (!dbExists) {
           const defaultAdmin = { name: '常用名字', email: 'a@jwt.com', password: 'admin', roles: [{ role: Role.Admin }] };
           this.addUser(defaultAdmin);
+          logger.log('info', 'database', { 
+            message: 'Created default admin user' 
+          });
         }
       } finally {
         connection.end();
       }
     } catch (err) {
-      console.error(JSON.stringify({ message: 'Error initializing database', exception: err.message, connection: config.db.connection }));
+      const logMessage = {
+        message: 'Error initializing database',
+        exception: err.message,
+        connection: logger.sanitize(config.db.connection)
+      };
+      console.error(JSON.stringify(logMessage));
+      logger.log('error', 'database', logMessage);
     }
   }
 
