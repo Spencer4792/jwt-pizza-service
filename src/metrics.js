@@ -272,7 +272,7 @@ class Metrics {
 // Only start metrics reporting if not in test environment
 const metricsInstance = new Metrics();
 if (process.env.NODE_ENV !== 'test') {
-  metricsInstance.startMetricsReporting(10);
+  metricsInstance.startMetricsReporting(60000);
 }
 
 const requestTracker = (req, res, next) => metricsInstance.requestTracker(req, res, next);
