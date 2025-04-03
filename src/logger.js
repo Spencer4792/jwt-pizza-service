@@ -165,8 +165,6 @@ class Logger {
       }]
     };
     
-    console.log(`Sending log: type=${type}, level=${level}`);
-    
     return fetch(config.logging.url, {
       method: 'post',
       body: JSON.stringify(logEvent),
@@ -180,8 +178,6 @@ class Logger {
         return response.text().then((text) => {
           console.error(`Failed to push log data to Grafana: ${text}`);
         });
-      } else {
-        console.log(`Successfully sent log: type=${type}, level=${level}`);
       }
     })
     .catch((error) => {

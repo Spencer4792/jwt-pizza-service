@@ -160,9 +160,6 @@ class Metrics {
 
     const body = JSON.stringify(metric);
     
-    console.log(`Sending metric: ${metricName}, value: ${metricValue}, type: ${type}`);
-    console.log(`apikey: ${config.metrics.apiKey}`);
-    
     return fetch(`${config.metrics.url}`, {
       method: 'POST',
       body: body,
@@ -176,8 +173,6 @@ class Metrics {
         return response.text().then((text) => {
           console.error(`Failed to push metrics data to Grafana: ${text}\n${body}`);
         });
-      } else {
-        console.log(`Successfully sent metric: ${metricName}`);
       }
     })
     .catch((error) => {
@@ -272,7 +267,7 @@ class Metrics {
 // Only start metrics reporting if not in test environment
 const metricsInstance = new Metrics();
 if (process.env.NODE_ENV !== 'test') {
-  metricsInstance.startMetricsReporting(60000);
+  metricsInstance.startMetricsReporting(30000);
 }
 
 const requestTracker = (req, res, next) => metricsInstance.requestTracker(req, res, next);
