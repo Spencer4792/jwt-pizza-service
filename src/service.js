@@ -1,4 +1,5 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const { authRouter, setAuthUser } = require('./routes/authRouter.js');
 const orderRouter = require('./routes/orderRouter.js');
 const franchiseRouter = require('./routes/franchiseRouter.js');
@@ -9,10 +10,19 @@ const logger = require('./logger.js');
 
 const app = express();
 
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: 'Too many requests from this IP, please try again later',
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+app.use(limiter);
+
 app.use(express.json());
 app.use(setAuthUser);
 
-// Add logger middleware before request tracker
 app.use(logger.httpLogger);
 app.use(requestTracker);
 
@@ -45,21 +55,25 @@ app.get('/', (req, res) => {
   });
 });
 
+// Special route to immediately reject suspicious Git-related paths
+app.use('/shop/git', (req, res) => {
+  res.status(403).json({
+    message: 'Access forbidden'
+  });
+});
+
 app.use('*', (req, res) => {
   res.status(404).json({
     message: 'unknown endpoint',
   });
 });
 
-// Error handling middleware with logging
 app.use((err, req, res, next) => {
-  // Log the error
   logger.errorLogger(err);
   
-  // Send error response
-  res.status(err.statusCode ?? 500).json({ 
-    message: err.message, 
-    stack: err.stack 
+  res.status(err.statusCode ?? 500).json({
+    message: err.message,
+    stack: err.stack
   });
   
   next();

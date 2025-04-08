@@ -13,6 +13,7 @@
   "dependencies": {
     "bcrypt": "^5.1.1",
     "express": "^4.19.2",
+    "express-rate-limit": "^7.5.0",
     "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.9.7"
   },
@@ -25,7 +26,10 @@
   },
   "jest": {
     "collectCoverage": true,
-    "testPathIgnorePatterns": ["/node_modules/", "testConfig.js"],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "testConfig.js"
+    ],
     "coverageReporters": [
       "json",
       "json-summary",
@@ -34,7 +38,7 @@
     ],
     "collectCoverageFrom": [
       "src/endpointHelper.js",
-      "src/model/model.js", 
+      "src/model/model.js",
       "src/routes/authRouter.js"
     ],
     "coverageThreshold": {
@@ -43,10 +47,15 @@
       }
     },
     "testEnvironment": "node",
-    "setupFiles": ["<rootDir>/jest.setup.js"],
+    "setupFiles": [
+      "<rootDir>/jest.setup.js"
+    ],
     "testMatch": [
       "**/__tests__/**/*.test.js"
     ],
-    "moduleDirectories": ["node_modules", "src"]
+    "moduleDirectories": [
+      "node_modules",
+      "src"
+    ]
   }
 }
